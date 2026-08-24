@@ -1,0 +1,6 @@
+.env
+state.json
+showtime_state.json
+venv/
+__pycache__/
+*.pyc
