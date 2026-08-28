@@ -56,7 +56,8 @@ STATE_FILE = Path(os.environ.get("SHOWTIME_STATE_FILE", "showtime_state.json"))
 POLL_INTERVAL_SECONDS = int(os.environ.get("SHOWTIME_POLL_INTERVAL_SECONDS", "15"))
 COOKIE_REWARM_EVERY = int(os.environ.get("COOKIE_REWARM_EVERY_CYCLES", "100"))
 MIN_SEAT_INCREASE = int(os.environ.get("SHOWTIME_MIN_SEAT_INCREASE", "2"))
-SEAT_CHECK_DAYS_AHEAD = int(os.environ.get("SHOWTIME_SEAT_CHECK_DAYS_AHEAD", "3"))
+# 이 날짜(YYYYMMDD) 이후 회차만 좌석 상세까지 체크. 비워두면 열려있는 모든 날짜를 체크.
+SEAT_CHECK_FROM_DATE = os.environ.get("SHOWTIME_SEAT_CHECK_FROM_DATE", "").strip()
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -301,11 +302,6 @@ def fetch_showtimes(context, watch: Watch, scn_ymd: str) -> list[dict] | None:
 def check_once(context, watches: list[Watch], state: dict) -> bool:
     """하나라도 세션 재워밍업이 필요했으면 True 반환."""
     needs_rewarm = False
-    today = datetime.now().strftime("%Y%m%d")
-    cutoff = (
-        datetime.strptime(today, "%Y%m%d").timestamp()
-        + SEAT_CHECK_DAYS_AHEAD * 86400
-    )
 
     for watch in watches:
         current_dates = fetch_dates(context, watch)
@@ -335,11 +331,11 @@ def check_once(context, watches: list[Watch], state: dict) -> bool:
             if new_dates:
                 send_new_dates_alert(watch, sorted(new_dates))
 
-        # 가까운 날짜(SEAT_CHECK_DAYS_AHEAD 이내)만 회차별 잔여좌석까지 조회
+        # SEAT_CHECK_FROM_DATE 이후 날짜만 회차별 잔여좌석까지 조회 (비어있으면 전체)
         curr_seats: dict[str, int] = {}
         dates_to_check = sorted(
             d for d in current_dates
-            if datetime.strptime(d, "%Y%m%d").timestamp() <= cutoff
+            if not SEAT_CHECK_FROM_DATE or d >= SEAT_CHECK_FROM_DATE
         )
         for scn_ymd in dates_to_check:
             items = fetch_showtimes(context, watch, scn_ymd)

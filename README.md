@@ -77,10 +77,10 @@ python watch_showtime.py          # 모니터링 시작 (Ctrl+C 종료)
 
 1. **신규 날짜/회차 오픈**: 봇을 켠 시점에 열려있는 상영 날짜 목록을 기준선으로 저장해두고, 이후 폴링마다
    새로 추가된 날짜가 있는지 비교합니다. 새 날짜가 나타나면 즉시 알림 (감지 범위: 열려있는 모든 날짜).
-2. **잔여좌석 증가(취소표 발생 등)**: 오늘부터 `SHOWTIME_SEAT_CHECK_DAYS_AHEAD`일 이내의 회차들은 잔여좌석
-   수까지 추적해서, 직전 확인 대비 `SHOWTIME_MIN_SEAT_INCREASE`석 이상 늘어나면 즉시 알림. (전체 날짜가
-   아니라 가까운 날짜만 보는 이유: 열려있는 날짜마다 별도 API 호출이 필요해서, 전체를 다 보면 폴링마다
-   요청이 너무 많아짐 — 취소표는 어차피 임박한 회차에서 잡아야 의미가 있어서 범위를 좁혔습니다)
+2. **잔여좌석 증가(취소표 발생 등)**: `SHOWTIME_SEAT_CHECK_FROM_DATE`(YYYYMMDD) 이후 날짜의 회차들만
+   잔여좌석 수까지 추적해서, 직전 확인 대비 `SHOWTIME_MIN_SEAT_INCREASE`석 이상 늘어나면 즉시 알림.
+   (전체 날짜가 아니라 범위를 지정하는 이유: 열려있는 날짜마다 별도 API 호출이 필요해서, 전체를 다 보면
+   폴링마다 요청이 너무 많아짐. 값을 비워두면 열려있는 모든 날짜를 체크함)
 
 알림엔 새로 열린 날짜 목록 또는 회차·시간·잔여좌석 변화 + 예매 페이지 링크가 같이 옵니다. 최초 실행 시엔
 기준선 저장만 하고 알림은 보내지 않습니다.
@@ -90,7 +90,7 @@ python watch_showtime.py          # 모니터링 시작 (Ctrl+C 종료)
 | `SHOWTIME_WATCHES` | `라벨\|movNo\|siteNo\|attrCd` 세미콜론 구분 |
 | `SHOWTIME_POLL_INTERVAL_SECONDS` | 확인 주기(초). 기본 15초 |
 | `SHOWTIME_MIN_SEAT_INCREASE` | 잔여좌석이 몇 석 이상 늘어나면 알림 보낼지. 기본 2석 |
-| `SHOWTIME_SEAT_CHECK_DAYS_AHEAD` | 좌석 상세까지 체크할 범위(오늘부터 며칠 이내). 기본 3일 |
+| `SHOWTIME_SEAT_CHECK_FROM_DATE` | 이 날짜(YYYYMMDD)부터의 회차만 좌석 상세 체크. 비우면 전체 |
 | `SHOWTIME_STATE_FILE` | 상태 저장 파일 경로 |
 | `COOKIE_REWARM_EVERY_CYCLES` | 몇 사이클마다 세션(쿠키)을 새로 고칠지. 기본 100 |
 
