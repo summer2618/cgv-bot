@@ -48,12 +48,15 @@ log = logging.getLogger("cgv-showtime-watch")
 CO_CD = "A420"
 BASE = "https://cgv.co.kr"
 SHOWTIME_DATES_PATH = "/api/v1/booking/searchSiteScnscYmdListByMov"
+SCHEDULE_PATH = "/api/v1/booking/searchSchByMov"
 REGN_SEARCH_PATH = "/api/v1/booking/searchRegnList"
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 STATE_FILE = Path(os.environ.get("SHOWTIME_STATE_FILE", "showtime_state.json"))
-POLL_INTERVAL_SECONDS = int(os.environ.get("SHOWTIME_POLL_INTERVAL_SECONDS", "90"))
-COOKIE_REWARM_EVERY = int(os.environ.get("COOKIE_REWARM_EVERY_CYCLES", "15"))
+POLL_INTERVAL_SECONDS = int(os.environ.get("SHOWTIME_POLL_INTERVAL_SECONDS", "15"))
+COOKIE_REWARM_EVERY = int(os.environ.get("COOKIE_REWARM_EVERY_CYCLES", "100"))
+MIN_SEAT_INCREASE = int(os.environ.get("SHOWTIME_MIN_SEAT_INCREASE", "2"))
+SEAT_CHECK_DAYS_AHEAD = int(os.environ.get("SHOWTIME_SEAT_CHECK_DAYS_AHEAD", "3"))
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,6 +64,17 @@ UA = (
 )
 
 WEEKDAY_KR = ["월", "화", "수", "목", "금", "토", "일"]
+
+# attrCd -> 상영관 이름(scnsNm)에 포함될 것으로 기대되는 키워드.
+# searchSchByMov는 극장의 모든 상영관(2D/IMAX/DOLBY 등)을 한꺼번에 반환하므로,
+# 이 키워드로 원하는 포맷의 회차만 걸러낸다.
+ATTR_KEYWORDS = {
+    "04": "IMAX",
+    "08": "SCREENX",
+    "03": "4DX",
+    "06": "DOLBY",
+    "09": "4DX",  # ULTRA 4DX
+}
 
 
 @dataclass
@@ -87,6 +101,12 @@ class Watch:
         if self.attr_cd:
             url += f"&div=CUST_EXPO_MOVTYP_CD&attrCd={self.attr_cd}"
         return url
+
+    def schedule_url(self, scn_ymd: str) -> str:
+        return (
+            f"{BASE}{SCHEDULE_PATH}?coCd={CO_CD}&siteNo={self.site_no}"
+            f"&scnYmd={scn_ymd}&movNo={self.mov_no}&rtctlScopCd=08"
+        )
 
 
 def load_watches() -> list[Watch]:
@@ -161,6 +181,39 @@ def send_new_dates_alert(watch: Watch, new_dates: list[str]) -> None:
         log.info("[%s] 신규 날짜 알림 전송: %s", watch.label, dates_str)
 
 
+def fmt_time(hhmm: str) -> str:
+    """CGV의 scnsrtTm(예: '2455')을 'HH:MM' 형태로. 24시 넘어가면 '익일 HH:MM'."""
+    try:
+        v = int(hhmm)
+        hour, minute = v // 100, v % 100
+        prefix = ""
+        if hour >= 24:
+            hour -= 24
+            prefix = "익일 "
+        return f"{prefix}{hour:02d}:{minute:02d}"
+    except (ValueError, TypeError):
+        return hhmm
+
+
+def showtime_key(item: dict) -> str:
+    return f"{item.get('scnYmd')}_{item.get('scnsNo')}_{item.get('scnsrtTm')}"
+
+
+def send_seat_increase_alert(watch: Watch, item: dict, prev_cnt: int, curr_cnt: int) -> None:
+    when = f"{fmt_date(item.get('scnYmd', ''))} {fmt_time(item.get('scnsrtTm', ''))}"
+    screen = item.get("expoScnsNm") or item.get("scnsNm") or ""
+    message = (
+        f"🚨 **[{watch.label}] 잔여좌석이 늘었어요!**\n"
+        f"{when} · {screen} — {prev_cnt}석 → {curr_cnt}석 (+{curr_cnt - prev_cnt})\n"
+        f"지금 바로 예매하러 가기: {watch.detail_url}"
+    )
+    resp = requests.post(DISCORD_WEBHOOK_URL, json={"content": message}, timeout=10)
+    if resp.status_code >= 300:
+        log.error("Discord 알림 전송 실패 (%s): %s", resp.status_code, resp.text)
+    else:
+        log.info("[%s] 잔여좌석 증가 알림 전송: %s (%d->%d)", watch.label, when, prev_cnt, curr_cnt)
+
+
 def warm_up(context, watch_for_referer: Watch) -> None:
     """실제 페이지를 한 번 로드해서 Cloudflare 통과 쿠키를 (재)확보한다."""
     page = context.new_page()
@@ -204,26 +257,109 @@ def fetch_dates(context, watch: Watch) -> set[str] | None:
     return {item["scnYmd"] for item in body.get("data", [])}
 
 
+def fetch_showtimes(context, watch: Watch, scn_ymd: str) -> list[dict] | None:
+    """특정 날짜의 회차 목록(잔여좌석 포함)을 가져와서, watch.attr_cd에 해당하는
+    포맷(예: IMAX)의 회차만 걸러 반환한다."""
+    try:
+        resp = context.request.get(
+            watch.schedule_url(scn_ymd),
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Referer": watch.detail_url,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+            timeout=15000,
+        )
+    except Exception:
+        log.exception("[%s] %s 회차 조회 중 오류", watch.label, scn_ymd)
+        return None
+
+    if resp.status != 200:
+        log.warning("[%s] %s 회차 조회 상태 코드 %s", watch.label, scn_ymd, resp.status)
+        return None
+
+    try:
+        body = resp.json()
+    except Exception:
+        log.warning("[%s] %s 회차 조회 JSON 파싱 실패", watch.label, scn_ymd)
+        return None
+
+    if body.get("statusCode") != 0:
+        log.warning("[%s] %s 회차 조회 statusMessage: %s", watch.label, scn_ymd, body.get("statusMessage"))
+        return None
+
+    items = body.get("data", []) or []
+    keyword = ATTR_KEYWORDS.get(watch.attr_cd) if watch.attr_cd else None
+    if keyword:
+        items = [
+            it for it in items
+            if keyword in (it.get("expoScnsNm") or "") or keyword in (it.get("scnsNm") or "")
+        ]
+    return items
+
+
 def check_once(context, watches: list[Watch], state: dict) -> bool:
     """하나라도 세션 재워밍업이 필요했으면 True 반환."""
     needs_rewarm = False
+    today = datetime.now().strftime("%Y%m%d")
+    cutoff = (
+        datetime.strptime(today, "%Y%m%d").timestamp()
+        + SEAT_CHECK_DAYS_AHEAD * 86400
+    )
+
     for watch in watches:
-        current = fetch_dates(context, watch)
-        if current is None:
+        current_dates = fetch_dates(context, watch)
+        if current_dates is None:
             needs_rewarm = True
             continue
 
-        prev_list = state.get(watch.key)
-        prev = set(prev_list) if prev_list is not None else None
+        prev_entry = state.get(watch.key)
+        seen_before = prev_entry is not None
+        if isinstance(prev_entry, dict):
+            prev_dates = set(prev_entry.get("dates", []))
+            prev_seats = prev_entry.get("seats", {})
+        elif isinstance(prev_entry, list):  # 이전 버전 state 포맷 호환
+            prev_dates = set(prev_entry)
+            prev_seats = {}
+        else:
+            prev_dates = set()
+            prev_seats = {}
 
-        log.info("[%s] 현재 오픈된 날짜 %d개: %s", watch.label, len(current), ", ".join(sorted(current)))
+        log.info(
+            "[%s] 현재 오픈된 날짜 %d개: %s",
+            watch.label, len(current_dates), ", ".join(sorted(current_dates)),
+        )
 
-        if prev is not None:
-            new_dates = current - prev
+        if seen_before:
+            new_dates = current_dates - prev_dates
             if new_dates:
                 send_new_dates_alert(watch, sorted(new_dates))
 
-        state[watch.key] = sorted(current)
+        # 가까운 날짜(SEAT_CHECK_DAYS_AHEAD 이내)만 회차별 잔여좌석까지 조회
+        curr_seats: dict[str, int] = {}
+        dates_to_check = sorted(
+            d for d in current_dates
+            if datetime.strptime(d, "%Y%m%d").timestamp() <= cutoff
+        )
+        for scn_ymd in dates_to_check:
+            items = fetch_showtimes(context, watch, scn_ymd)
+            if items is None:
+                needs_rewarm = True
+                continue
+            for item in items:
+                try:
+                    cnt = int(item.get("frSeatCnt", 0))
+                except (ValueError, TypeError):
+                    continue
+                key = showtime_key(item)
+                curr_seats[key] = cnt
+
+                if seen_before and key in prev_seats:
+                    diff = cnt - prev_seats[key]
+                    if diff >= MIN_SEAT_INCREASE:
+                        send_seat_increase_alert(watch, item, prev_seats[key], cnt)
+
+        state[watch.key] = {"dates": sorted(current_dates), "seats": curr_seats}
         save_state(state)
 
     return needs_rewarm
