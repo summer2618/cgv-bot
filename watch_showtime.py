@@ -58,6 +58,8 @@ COOKIE_REWARM_EVERY = int(os.environ.get("COOKIE_REWARM_EVERY_CYCLES", "100"))
 MIN_SEAT_INCREASE = int(os.environ.get("SHOWTIME_MIN_SEAT_INCREASE", "2"))
 # 이 날짜(YYYYMMDD) 이후 회차만 좌석 상세까지 체크. 비워두면 열려있는 모든 날짜를 체크.
 SEAT_CHECK_FROM_DATE = os.environ.get("SHOWTIME_SEAT_CHECK_FROM_DATE", "").strip()
+# false로 끄면 잔여좌석 증가(취소표) 알림 자체를 안 보냄. "신규 날짜 오픈" 감지는 이 값과 무관하게 계속 동작.
+ENABLE_SEAT_ALERTS = os.environ.get("SHOWTIME_ENABLE_SEAT_ALERTS", "true").strip().lower() == "true"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -333,27 +335,28 @@ def check_once(context, watches: list[Watch], state: dict) -> bool:
 
         # SEAT_CHECK_FROM_DATE 이후 날짜만 회차별 잔여좌석까지 조회 (비어있으면 전체)
         curr_seats: dict[str, int] = {}
-        dates_to_check = sorted(
-            d for d in current_dates
-            if not SEAT_CHECK_FROM_DATE or d >= SEAT_CHECK_FROM_DATE
-        )
-        for scn_ymd in dates_to_check:
-            items = fetch_showtimes(context, watch, scn_ymd)
-            if items is None:
-                needs_rewarm = True
-                continue
-            for item in items:
-                try:
-                    cnt = int(item.get("frSeatCnt", 0))
-                except (ValueError, TypeError):
+        if ENABLE_SEAT_ALERTS:
+            dates_to_check = sorted(
+                d for d in current_dates
+                if not SEAT_CHECK_FROM_DATE or d >= SEAT_CHECK_FROM_DATE
+            )
+            for scn_ymd in dates_to_check:
+                items = fetch_showtimes(context, watch, scn_ymd)
+                if items is None:
+                    needs_rewarm = True
                     continue
-                key = showtime_key(item)
-                curr_seats[key] = cnt
+                for item in items:
+                    try:
+                        cnt = int(item.get("frSeatCnt", 0))
+                    except (ValueError, TypeError):
+                        continue
+                    key = showtime_key(item)
+                    curr_seats[key] = cnt
 
-                if seen_before and key in prev_seats:
-                    diff = cnt - prev_seats[key]
-                    if diff >= MIN_SEAT_INCREASE:
-                        send_seat_increase_alert(watch, item, prev_seats[key], cnt)
+                    if seen_before and key in prev_seats:
+                        diff = cnt - prev_seats[key]
+                        if diff >= MIN_SEAT_INCREASE:
+                            send_seat_increase_alert(watch, item, prev_seats[key], cnt)
 
         state[watch.key] = {"dates": sorted(current_dates), "seats": curr_seats}
         save_state(state)

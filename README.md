@@ -91,6 +91,7 @@ python watch_showtime.py          # 모니터링 시작 (Ctrl+C 종료)
 | `SHOWTIME_POLL_INTERVAL_SECONDS` | 확인 주기(초). 기본 15초 |
 | `SHOWTIME_MIN_SEAT_INCREASE` | 잔여좌석이 몇 석 이상 늘어나면 알림 보낼지. 기본 2석 |
 | `SHOWTIME_SEAT_CHECK_FROM_DATE` | 이 날짜(YYYYMMDD)부터의 회차만 좌석 상세 체크. 비우면 전체 |
+| `SHOWTIME_ENABLE_SEAT_ALERTS` | 잔여좌석 증가(취소표) 알림 on/off. 기본 true |
 | `SHOWTIME_STATE_FILE` | 상태 저장 파일 경로 |
 | `COOKIE_REWARM_EVERY_CYCLES` | 몇 사이클마다 세션(쿠키)을 새로 고칠지. 기본 100 |
 
