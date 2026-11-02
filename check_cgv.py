@@ -1,45 +1,58 @@
 
 import os
-from playwright.sync_api import sync_playwright
+import json
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-movie_ids = os.environ["MOVIE_IDS"]
-movie_no = movie_ids.split(",")[0].split(":")[0].strip()
+movie_no = os.environ["MOVIE_IDS"].split(",")[0].split(":")[0].strip()
+today = datetime.now(ZoneInfo("Asia/Seoul")).strftime("%Y%m%d")
 
-url = f"https://cgv.co.kr/cnm/cgvChart/movieChart/{movie_no}"
-api_path = "/api/v1/content/cgvct/searchMovDtlMain"
+params = urllib.parse.urlencode({
+    "coCd": "A420",
+    "movNo": movie_no,
+    "scnYmd": today,
+})
 
-print("CGV 영화번호:", movie_no)
-print("조회 주소:", url)
+url = (
+    "https://cgv.co.kr/api/v1/content/cgvct/"
+    "searchMovDtlMain?" + params
+)
 
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
-    page = browser.new_page(locale="ko-KR")
+def find_booking_status(obj):
+    if isinstance(obj, dict):
+        if "atktPsblYn" in obj:
+            return obj["atktPsblYn"]
+        for value in obj.values():
+            result = find_booking_status(value)
+            if result is not None:
+                return result
+    elif isinstance(obj, list):
+        for item in obj:
+            result = find_booking_status(item)
+            if result is not None:
+                return result
+    return None
 
-    try:
-        with page.expect_response(
-            lambda response: api_path in response.url,
-            timeout=30000
-        ) as response_info:
-            page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=30000
-            )
+request = urllib.request.Request(
+    url,
+    headers={
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/json",
+    }
+)
 
-        response = response_info.value
-        print("HTTP 상태:", response.status)
+with urllib.request.urlopen(request, timeout=20) as response:
+    print("HTTP 상태:", response.status)
+    data = json.load(response)
 
-        body = response.json()
-        print("API 상태:", body.get("statusCode"))
+status = find_booking_status(data)
 
-        data = body.get("data") or {}
-        print("영화명:", data.get("movNm"))
-        print("예매 가능 여부:", data.get("atktPsblYn"))
+print("영화번호:", movie_no)
+print("예매 가능 여부:", status)
 
-        if data.get("atktPsblYn") not in ("Y", "N"):
-            raise RuntimeError("예매 상태를 정상적으로 읽지 못했습니다.")
+if status not in ("Y", "N"):
+    raise RuntimeError("예매 상태를 확인하지 못했습니다.")
 
-        print("CGV 조회 테스트 성공")
-
-    finally:
-        browser.close()
+print("CGV 조회 테스트 성공")
