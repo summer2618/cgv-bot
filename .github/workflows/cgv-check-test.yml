@@ -18,10 +18,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Playwright
-        run: |
-          pip install playwright
-          python -m playwright install chromium --with-deps
+
 
       - name: Check CGV booking status
         env:
