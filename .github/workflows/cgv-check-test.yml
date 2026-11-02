@@ -1,0 +1,29 @@
+
+name: CGV Check Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          python -m playwright install chromium --with-deps
+
+      - name: Check CGV booking status
+        env:
+          MOVIE_IDS: ${{ vars.MOVIE_IDS }}
+        run: python check_cgv.py
